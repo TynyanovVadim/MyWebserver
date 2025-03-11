@@ -1,14 +1,16 @@
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <errno.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <poll.h>
+// #include <arpa/inet.h>
+// #include <sys/socket.h>
+// #include <errno.h>
+// #include <stdio.h>
+// #include <string.h>
+// #include <poll.h>
+// #include <signal.h>
 
 #include "webserver.h"
 
 int main() {
+    signal(SIGPIPE, SIG_IGN);
+
     int tcp_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_socket_fd == -1) {
         perror("webserver (socket)");
@@ -36,16 +38,15 @@ int main() {
     }
 
     // Create polls
-    int id_to_fd[SOMAXCONN + 1] = {tcp_socket_fd};
     struct pollfd poll_idx[SOMAXCONN + 1];
 
-    poll_idx[0].fd = tcp_socket_fd;
-    poll_idx[0].events = POLLIN;
-
+    
     for (int i = 1; i <= SOMAXCONN + 1; ++i) {
         poll_idx[i].fd = -1;
-        id_to_fd[i] = -1;
     }
+
+    poll_idx[tcp_socket_fd].fd = tcp_socket_fd;
+    poll_idx[tcp_socket_fd].events = POLLIN;
 
     // Webserver works
     for (;;) {
@@ -59,8 +60,8 @@ int main() {
             continue;
         } 
 
-        if (poll_idx[0].revents & POLLIN) {
-            poll_idx[0].revents = 0;
+        if (poll_idx[tcp_socket_fd].revents & POLLIN) {
+            poll_idx[tcp_socket_fd].revents = 0;
             int client_sock_fd = accept(tcp_socket_fd, (struct sockaddr*)&host_addr, (socklen_t*)&host_addrlen);
 
             if (client_sock_fd < 0) {
@@ -68,41 +69,21 @@ int main() {
                 continue;
             }
             
-            for (int i = 1; i <= SOMAXCONN + 1; ++i) {
-                if (poll_idx[i].fd == -1) {
-                    poll_idx[i].fd = client_sock_fd;
-                    poll_idx[i].events = POLLIN;
-                    id_to_fd[i] = client_sock_fd;
-                    break;
-                }
-            }
-            continue;
+            poll_idx[client_sock_fd].fd = client_sock_fd;
+            poll_idx[client_sock_fd].events = POLLIN;
         }
 
-        for (int i = 1; i <= SOMAXCONN + 1; ++i) {
-            if (poll_idx[i].revents & POLLIN) {
+        for (int i = 0; i <= SOMAXCONN + 1; ++i) {
+            if (i != tcp_socket_fd && poll_idx[i].revents & POLLIN) {
                 poll_idx[i].revents = 0;
-                if (talk(id_to_fd[i]) == 0) {
-                    close(id_to_fd[i]);
-                    poll_idx[i].fd = -1;
-                    id_to_fd[i] = -1;    
+                if (talk(i) == 0) {
+                    close(i);
+                    poll_idx[i].fd = -1; 
                 }
             }
         }
     }
 
+    close(tcp_socket_fd);
     return 0;
-}
-
-int talk(int client_sock_fd) {
-    char buf[10000] = {};
-    char resp[] = "HTTP/1.0 200 OK\r\n"
-                  "Server: webserver-c\r\n"
-                  "Content-type: text/html\r\n\r\n";
-
-    int recv_bytes = recv(client_sock_fd, buf, 10000, 0);
-    // printf("%s\n", buf);
-    snprintf(buf, 10000, "%s<html>%d</html>\r\n", resp, client_sock_fd);
-    send(client_sock_fd, buf, strlen(buf), 0);
-    return recv_bytes;
 }
