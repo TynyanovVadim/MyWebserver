@@ -8,10 +8,15 @@
 
 #include "webserver.h"
 
+void TERM_exit();
+
+int tcp_socket_fd;
+
 int main() {
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGINT, TERM_exit);
 
-    int tcp_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    tcp_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_socket_fd == -1) {
         perror("webserver (socket)");
         return 1;
@@ -28,11 +33,13 @@ int main() {
     // Bind socket to the address
     if (bind(tcp_socket_fd, (struct sockaddr*)&host_addr, host_addrlen) != 0) {
         perror("webserver (bind)");
+        close(tcp_socket_fd);
         return 1;
     }
 
     // Listen for incomming connection
     if (listen(tcp_socket_fd, SOMAXCONN) != 0) {
+        close(tcp_socket_fd);
         perror("webserver (listen)");
         return 1;
     }
@@ -53,6 +60,7 @@ int main() {
         int poll_res = poll(poll_idx, SOMAXCONN + 1, 100);
 
         if (poll_res == -1) {
+            close(tcp_socket_fd);
             perror("webserver (poll)");
             return 1;
         } else if (poll_res == 0) {
@@ -86,4 +94,9 @@ int main() {
 
     close(tcp_socket_fd);
     return 0;
+}
+
+void TERM_exit() {
+    shutdown(tcp_socket_fd, SHUT_RDWR);
+    exit(0);
 }
